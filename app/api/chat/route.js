@@ -4,6 +4,23 @@ import { NextResponse } from 'next/server';
 let cachedInstructions = null;
 let cachedModel = null;
 
+// Helper function to fetch with a timeout
+async function fetchWithTimeout(url, options = {}, timeoutMs = 6000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    throw error;
+  }
+}
+
 async function getAgentDefinition(endpoint, apiKey, agentId) {
   if (cachedInstructions && cachedModel) {
     return { instructions: cachedInstructions, model: cachedModel };
@@ -11,10 +28,10 @@ async function getAgentDefinition(endpoint, apiKey, agentId) {
 
   try {
     const base = endpoint.replace(/\/$/, '');
-    const res = await fetch(`${base}/agents/${agentId}?api-version=v1`, {
+    const res = await fetchWithTimeout(`${base}/agents/${agentId}?api-version=v1`, {
       method: 'GET',
       headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
-    });
+    }, 6000);
 
     if (!res.ok) throw new Error(`Agent fetch failed: ${res.status}`);
 
@@ -67,7 +84,7 @@ export async function POST(request) {
     // ── Step 3: Call Azure OpenAI Chat Completions ──
     const completionsUrl = `https://${resource}.openai.azure.com/openai/deployments/${model}/chat/completions?api-version=2024-10-21`;
 
-    const completionsRes = await fetch(completionsUrl, {
+    const completionsRes = await fetchWithTimeout(completionsUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -78,7 +95,7 @@ export async function POST(request) {
         max_tokens: 1000,
         temperature: 0.7,
       }),
-    });
+    }, 6000);
 
     if (!completionsRes.ok) {
       const errText = await completionsRes.text();
