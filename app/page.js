@@ -54,8 +54,9 @@ export default function Home() {
   const [settings, setSettings] = useState({
     endpoint: '',
     apiKey: '',
+    agentId: 'agt',
     deploymentName: '',
-    apiVersion: '2024-06-01',
+    apiVersion: '2024-08-01-preview',
   });
 
   const chatEndRef = useRef(null);
@@ -66,7 +67,13 @@ export default function Home() {
     const stored = getStoredConversations();
     const storedSettings = getStoredSettings();
     setConversations(stored);
-    if (storedSettings.endpoint) setSettings(storedSettings);
+    if (storedSettings.endpoint) {
+      setSettings({
+        agentId: 'agt',
+        apiVersion: '2024-08-01-preview',
+        ...storedSettings
+      });
+    }
     if (stored.length > 0) setActiveConvId(stored[0].id);
   }, []);
 
@@ -183,6 +190,7 @@ export default function Home() {
           settings: settings.endpoint ? {
             endpoint: settings.endpoint,
             apiKey: settings.apiKey,
+            agentId: settings.agentId,
             deploymentName: settings.deploymentName,
             apiVersion: settings.apiVersion,
           } : undefined,
@@ -438,6 +446,18 @@ export default function Home() {
                 <div className="hint">Encontre em Azure Portal → Seu recurso → Keys and Endpoint</div>
               </div>
 
+              <div className="form-group">
+                <label htmlFor="azure-agent-id">ID do Agente</label>
+                <input
+                  id="azure-agent-id"
+                  type="text"
+                  placeholder="agt (padrão)"
+                  value={settings.agentId || ''}
+                  onChange={(e) => setSettings(s => ({...s, agentId: e.target.value}))}
+                />
+                <div className="hint">O identificador do Agente no Azure AI Studio (ex: agt)</div>
+              </div>
+
               <div className="form-divider" />
 
               <div className="form-group">
@@ -457,11 +477,11 @@ export default function Home() {
                 <input
                   id="azure-api-version"
                   type="text"
-                  placeholder="2024-06-01"
+                  placeholder="2024-08-01-preview"
                   value={settings.apiVersion}
                   onChange={(e) => setSettings(s => ({...s, apiVersion: e.target.value}))}
                 />
-                <div className="hint">Versão da API do Azure OpenAI (padrão: 2024-06-01)</div>
+                <div className="hint">Versão da API do Azure OpenAI (padrão: 2024-08-01-preview)</div>
               </div>
             </div>
             <div className="modal-footer">

@@ -1,10 +1,5 @@
 import { NextResponse } from 'next/server';
 
-const SYSTEM_PROMPT = `Você é o AgentAZ, um assistente de inteligência artificial amigável e prestativo. 
-Você responde em Português do Brasil de forma clara, objetiva e educada.
-Você pode ajudar com diversos assuntos como programação, escrita, análise, matemática, e conversas gerais.
-Sempre seja útil e, quando não souber algo, admita honestamente.`;
-
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -13,25 +8,77 @@ export async function POST(request) {
     // Use settings from request or environment variables
     const endpoint = settings?.endpoint || process.env.AZURE_ENDPOINT;
     const apiKey = settings?.apiKey || process.env.AZURE_API_KEY;
-    const deploymentName = settings?.deploymentName || process.env.AZURE_DEPLOYMENT_NAME;
-    const apiVersion = settings?.apiVersion || process.env.AZURE_API_VERSION || '2024-06-01';
+    const agentId = settings?.agentId || process.env.AZURE_AGENT_ID || 'agt';
+    let deploymentName = settings?.deploymentName || process.env.AZURE_DEPLOYMENT_NAME;
+    const apiVersion = settings?.apiVersion || process.env.AZURE_API_VERSION || '2024-08-01-preview';
 
     // If Azure is not configured, return a helpful mock response
-    if (!endpoint || !apiKey || !deploymentName) {
+    if (!endpoint || !apiKey) {
       return NextResponse.json({
         message: getMockResponse(messages[messages.length - 1]?.content || ''),
       });
     }
 
-    // Build Azure OpenAI API URL
-    const url = `${endpoint.replace(/\/$/, '')}/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`;
+    let systemPrompt = "Você é o AgentAZ, um assistente de inteligência artificial amigável e prestativo. Você responde em Português do Brasil de forma clara, objetiva e educada.";
+
+    // 1. Fetch Agent definition if endpoint is a Project Service endpoint
+    const isProjectEndpoint = endpoint.includes('.services.ai.azure.com');
+    if (isProjectEndpoint) {
+      try {
+        const cleanProjectUrl = endpoint.replace(/\/$/, '');
+        const agentUrl = `${cleanProjectUrl}/agents/${agentId}?api-version=v1`;
+        
+        const agentRes = await fetch(agentUrl, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'api-key': apiKey,
+          },
+        });
+
+        if (agentRes.ok) {
+          const agentData = await agentRes.json();
+          const instructions = agentData?.versions?.latest?.definition?.instructions;
+          if (instructions) {
+            systemPrompt = instructions;
+          }
+          
+          // Auto-detect deployment name from agent's model definition if not explicitly provided
+          if (!deploymentName) {
+            const agentModel = agentData?.versions?.latest?.definition?.model;
+            if (agentModel) {
+              deploymentName = agentModel;
+            }
+          }
+        } else {
+          console.warn(`Could not load agent details: status ${agentRes.status}`);
+        }
+      } catch (agentErr) {
+        console.error('Error fetching agent definition:', agentErr);
+      }
+    }
+
+    // Default deployment if still not found
+    if (!deploymentName) {
+      deploymentName = 'gpt-4.1';
+    }
+
+    // 2. Derive Azure OpenAI Endpoint
+    let openaiUrl = '';
+    if (isProjectEndpoint) {
+      const parsedUrl = new URL(endpoint);
+      const hubName = parsedUrl.hostname.split('.')[0];
+      openaiUrl = `https://${hubName}.openai.azure.com/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`;
+    } else {
+      openaiUrl = `${endpoint.replace(/\/$/, '')}/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`;
+    }
 
     const azureMessages = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       ...messages.slice(-20), // Keep last 20 messages for context
     ];
 
-    const response = await fetch(url, {
+    const response = await fetch(openaiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
