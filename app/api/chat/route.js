@@ -84,8 +84,15 @@ export async function POST(request) {
       const errText = await completionsRes.text();
       console.error('Chat completions failed:', completionsRes.status, errText);
       return NextResponse.json(
-        { error: 'Não consegui gerar uma resposta. Tente novamente.' },
-        { status: 503 }
+        { 
+          error: 'Não consegui gerar uma resposta. Tente novamente.',
+          debug: {
+            status: completionsRes.status,
+            errorText: errText,
+            url: completionsUrl
+          }
+        },
+        { status: 502 }
       );
     }
 
@@ -99,7 +106,13 @@ export async function POST(request) {
   } catch (error) {
     console.error('Chat API Error:', error);
     return NextResponse.json(
-      { error: 'Erro interno. Tente novamente em instantes.' },
+      { 
+        error: 'Erro interno. Tente novamente em instantes.',
+        debug: {
+          message: error.message,
+          stack: error.stack
+        }
+      },
       { status: 500 }
     );
   }
