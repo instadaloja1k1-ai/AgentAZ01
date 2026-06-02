@@ -23,18 +23,6 @@ function saveConversations(conversations) {
   localStorage.setItem('agentaz_conversations', JSON.stringify(conversations));
 }
 
-function getStoredSettings() {
-  if (typeof window === 'undefined') return {};
-  try {
-    return JSON.parse(localStorage.getItem('agentaz_settings') || '{}');
-  } catch { return {}; }
-}
-
-function saveSettings(settings) {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('agentaz_settings', JSON.stringify(settings));
-}
-
 // ============== SUGGESTIONS ==============
 const SUGGESTIONS = [
   { icon: '💡', text: 'Me explique como funciona inteligência artificial' },
@@ -50,14 +38,6 @@ export default function Home() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settings, setSettings] = useState({
-    endpoint: '',
-    apiKey: '',
-    agentId: 'agt',
-    deploymentName: '',
-    apiVersion: '2024-08-01-preview',
-  });
 
   const chatEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -65,15 +45,7 @@ export default function Home() {
   // Load from localStorage
   useEffect(() => {
     const stored = getStoredConversations();
-    const storedSettings = getStoredSettings();
     setConversations(stored);
-    if (storedSettings.endpoint) {
-      setSettings({
-        agentId: 'agt',
-        apiVersion: '2024-08-01-preview',
-        ...storedSettings
-      });
-    }
     if (stored.length > 0) setActiveConvId(stored[0].id);
   }, []);
 
@@ -181,12 +153,12 @@ export default function Home() {
     setIsLoading(true);
 
     try {
+      const currentMessages = conversations.find(c => c.id === currentConvId)?.messages || [];
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [...(conversations.find(c => c.id === currentConvId)?.messages || []), userMessage]
-            .map(m => ({ role: m.role, content: m.content })),
+          messages: [...currentMessages, userMessage].map(m => ({ role: m.role, content: m.content })),
         }),
       });
 
@@ -206,7 +178,7 @@ export default function Home() {
         }
         return c;
       }));
-    } catch (error) {
+    } catch {
       const errorMessage = {
         id: generateId(),
         role: 'assistant',
@@ -224,7 +196,7 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
-  }, [input, isLoading, activeConvId, conversations, settings]);
+  }, [input, isLoading, activeConvId, conversations]);
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -232,13 +204,6 @@ export default function Home() {
       handleSend();
     }
   };
-
-  const handleSaveSettings = () => {
-    saveSettings(settings);
-    setSettingsOpen(false);
-  };
-
-  const isConfigured = true; // Always connected — credentials are built into the backend
 
   return (
     <div className="app-container">
@@ -284,12 +249,6 @@ export default function Home() {
             </div>
           ))}
         </div>
-
-        <div className="sidebar-footer">
-          <button className="settings-btn" onClick={() => setSettingsOpen(true)} id="settings-btn">
-            ⚙️ Configurações
-          </button>
-        </div>
       </aside>
 
       {/* Main Content */}
@@ -302,13 +261,8 @@ export default function Home() {
             </button>
             <div className="header-title">
               <h1>AgentAZ</h1>
-              <span className="model-badge">🟢 Conectado</span>
+              <span className="model-badge">🟢 Online</span>
             </div>
-          </div>
-          <div className="header-right">
-            <button className="header-btn" onClick={() => setSettingsOpen(true)} title="Configurações" id="header-settings-btn">
-              ⚙️
-            </button>
           </div>
         </header>
 
@@ -396,92 +350,6 @@ export default function Home() {
           </div>
         </div>
       </main>
-
-      {/* Settings Modal */}
-      {settingsOpen && (
-        <div className="modal-overlay" onClick={() => setSettingsOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>⚙️ Configurações</h2>
-              <button className="modal-close" onClick={() => setSettingsOpen(false)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <div className="status-indicator">
-                <div className={`status-dot ${isConfigured ? 'connected' : 'disconnected'}`} />
-                <span className="status-text">
-                  {isConfigured ? 'Azure AI configurado' : 'Azure AI não configurado'}
-                </span>
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="azure-endpoint">Endpoint do Azure AI</label>
-                <input
-                  id="azure-endpoint"
-                  type="text"
-                  placeholder="https://seu-recurso.openai.azure.com/"
-                  value={settings.endpoint}
-                  onChange={(e) => setSettings(s => ({...s, endpoint: e.target.value}))}
-                />
-                <div className="hint">URL do recurso Azure OpenAI ou Azure AI Foundry</div>
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="azure-api-key">Chave da API</label>
-                <input
-                  id="azure-api-key"
-                  type="password"
-                  placeholder="Sua chave da API do Azure"
-                  value={settings.apiKey}
-                  onChange={(e) => setSettings(s => ({...s, apiKey: e.target.value}))}
-                />
-                <div className="hint">Encontre em Azure Portal → Seu recurso → Keys and Endpoint</div>
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="azure-agent-id">ID do Agente</label>
-                <input
-                  id="azure-agent-id"
-                  type="text"
-                  placeholder="agt (padrão)"
-                  value={settings.agentId || ''}
-                  onChange={(e) => setSettings(s => ({...s, agentId: e.target.value}))}
-                />
-                <div className="hint">O identificador do Agente no Azure AI Studio (ex: agt)</div>
-              </div>
-
-              <div className="form-divider" />
-
-              <div className="form-group">
-                <label htmlFor="azure-deployment">Nome do Deployment</label>
-                <input
-                  id="azure-deployment"
-                  type="text"
-                  placeholder="gpt-4, gpt-35-turbo, etc."
-                  value={settings.deploymentName}
-                  onChange={(e) => setSettings(s => ({...s, deploymentName: e.target.value}))}
-                />
-                <div className="hint">Nome do modelo deployado no Azure AI Studio</div>
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="azure-api-version">Versão da API</label>
-                <input
-                  id="azure-api-version"
-                  type="text"
-                  placeholder="2024-08-01-preview"
-                  value={settings.apiVersion}
-                  onChange={(e) => setSettings(s => ({...s, apiVersion: e.target.value}))}
-                />
-                <div className="hint">Versão da API do Azure OpenAI (padrão: 2024-08-01-preview)</div>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn-secondary" onClick={() => setSettingsOpen(false)}>Cancelar</button>
-              <button className="btn-primary" onClick={handleSaveSettings} id="save-settings-btn">Salvar</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
