@@ -5,10 +5,7 @@ export async function POST(request) {
     const body = await request.json();
     const { messages, settings } = body;
 
-    // Use settings from request or environment variables
-    const endpoint = settings?.endpoint || process.env.AZURE_ENDPOINT;
-    const apiKey = settings?.apiKey || process.env.AZURE_API_KEY;
-    const agentId = settings?.agentId || process.env.AZURE_AGENT_ID;
+    // Credentials loaded from environment variables (set in Vercel dashboard)\r\n    const endpoint = settings?.endpoint || process.env.AZURE_ENDPOINT;\r\n    const apiKey = settings?.apiKey || process.env.AZURE_API_KEY;\r\n    const agentId = settings?.agentId || process.env.AZURE_AGENT_ID;
 
     // If Azure is not configured, return a helpful mock response
     if (!endpoint || !apiKey) {

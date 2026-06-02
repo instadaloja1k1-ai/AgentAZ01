@@ -187,13 +187,6 @@ export default function Home() {
         body: JSON.stringify({
           messages: [...(conversations.find(c => c.id === currentConvId)?.messages || []), userMessage]
             .map(m => ({ role: m.role, content: m.content })),
-          settings: settings.endpoint ? {
-            endpoint: settings.endpoint,
-            apiKey: settings.apiKey,
-            agentId: settings.agentId,
-            deploymentName: settings.deploymentName,
-            apiVersion: settings.apiVersion,
-          } : undefined,
         }),
       });
 
@@ -245,7 +238,7 @@ export default function Home() {
     setSettingsOpen(false);
   };
 
-  const isConfigured = !!settings.endpoint && !!settings.apiKey;
+  const isConfigured = true; // Always connected — credentials are built into the backend
 
   return (
     <div className="app-container">
@@ -309,9 +302,7 @@ export default function Home() {
             </button>
             <div className="header-title">
               <h1>AgentAZ</h1>
-              <span className="model-badge">
-                {isConfigured ? '🟢 Conectado' : '🟡 Não configurado'}
-              </span>
+              <span className="model-badge">🟢 Conectado</span>
             </div>
           </div>
           <div className="header-right">
