@@ -8,9 +8,7 @@ export async function POST(request) {
     // Use settings from request or environment variables
     const endpoint = settings?.endpoint || process.env.AZURE_ENDPOINT;
     const apiKey = settings?.apiKey || process.env.AZURE_API_KEY;
-    const agentId = settings?.agentId || process.env.AZURE_AGENT_ID || 'agt';
-    let deploymentName = settings?.deploymentName || process.env.AZURE_DEPLOYMENT_NAME;
-    const apiVersion = settings?.apiVersion || process.env.AZURE_API_VERSION || '2024-08-01-preview';
+    const agentId = settings?.agentId || process.env.AZURE_AGENT_ID;
 
     // If Azure is not configured, return a helpful mock response
     if (!endpoint || !apiKey) {
@@ -19,92 +17,132 @@ export async function POST(request) {
       });
     }
 
-    let systemPrompt = "Você é o AgentAZ, um assistente de inteligência artificial amigável e prestativo. Você responde em Português do Brasil de forma clara, objetiva e educada.";
-
-    // 1. Fetch Agent definition if endpoint is a Project Service endpoint
-    const isProjectEndpoint = endpoint.includes('.services.ai.azure.com');
-    if (isProjectEndpoint) {
-      try {
-        const cleanProjectUrl = endpoint.replace(/\/$/, '');
-        const agentUrl = `${cleanProjectUrl}/agents/${agentId}?api-version=v1`;
-        
-        const agentRes = await fetch(agentUrl, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'api-key': apiKey,
-          },
-        });
-
-        if (agentRes.ok) {
-          const agentData = await agentRes.json();
-          const instructions = agentData?.versions?.latest?.definition?.instructions;
-          if (instructions) {
-            systemPrompt = instructions;
-          }
-          
-          // Auto-detect deployment name from agent's model definition if not explicitly provided
-          if (!deploymentName) {
-            const agentModel = agentData?.versions?.latest?.definition?.model;
-            if (agentModel) {
-              deploymentName = agentModel;
-            }
-          }
-        } else {
-          console.warn(`Could not load agent details: status ${agentRes.status}`);
-        }
-      } catch (agentErr) {
-        console.error('Error fetching agent definition:', agentErr);
-      }
-    }
-
-    // Default deployment if still not found
-    if (!deploymentName) {
-      deploymentName = 'gpt-4.1';
-    }
-
-    // 2. Derive Azure OpenAI Endpoint
-    let openaiUrl = '';
-    if (isProjectEndpoint) {
-      const parsedUrl = new URL(endpoint);
-      const hubName = parsedUrl.hostname.split('.')[0];
-      openaiUrl = `https://${hubName}.openai.azure.com/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`;
-    } else {
-      openaiUrl = `${endpoint.replace(/\/$/, '')}/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`;
-    }
-
-    const azureMessages = [
-      { role: 'system', content: systemPrompt },
-      ...messages.slice(-20), // Keep last 20 messages for context
-    ];
-
-    const response = await fetch(openaiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'api-key': apiKey,
-      },
-      body: JSON.stringify({
-        messages: azureMessages,
-        max_tokens: 2048,
-        temperature: 0.7,
-        top_p: 0.95,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      console.error('Azure API Error:', response.status, errorData);
+    if (!agentId) {
       return NextResponse.json(
-        { error: `Erro na API do Azure (${response.status}). Verifique suas configurações.` },
-        { status: response.status }
+        { error: 'Agent ID não configurado. Vá em ⚙️ Configurações e preencha o Agent ID.' },
+        { status: 400 }
       );
     }
 
-    const data = await response.json();
-    const assistantMessage = data.choices?.[0]?.message?.content || 'Sem resposta do modelo.';
+    const baseUrl = endpoint.replace(/\/$/, '');
+    const apiVersion = 'v1';
+    const headers = {
+      'Content-Type': 'application/json',
+      'api-key': apiKey,
+    };
 
-    return NextResponse.json({ message: assistantMessage });
+    // ── Step 1: Create a new thread ──
+    const threadRes = await fetch(`${baseUrl}/threads?api-version=${apiVersion}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({}),
+    });
+
+    if (!threadRes.ok) {
+      const errText = await threadRes.text();
+      console.error('Failed to create thread:', threadRes.status, errText);
+      return NextResponse.json(
+        { error: `Erro ao criar thread (${threadRes.status}). Verifique o Endpoint.` },
+        { status: threadRes.status }
+      );
+    }
+
+    const thread = await threadRes.json();
+    const threadId = thread.id;
+
+    // ── Step 2: Add conversation history to the thread ──
+    const recentMessages = messages.slice(-10);
+    for (const msg of recentMessages) {
+      const role = msg.role === 'assistant' ? 'assistant' : 'user';
+      const addMsgRes = await fetch(
+        `${baseUrl}/threads/${threadId}/messages?api-version=${apiVersion}`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ role, content: msg.content }),
+        }
+      );
+      if (!addMsgRes.ok) {
+        console.warn(`Failed to add message (role: ${role}):`, await addMsgRes.text());
+      }
+    }
+
+    // ── Step 3: Run the agent on the thread ──
+    const runRes = await fetch(
+      `${baseUrl}/threads/${threadId}/runs?api-version=${apiVersion}`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ assistant_id: agentId }),
+      }
+    );
+
+    if (!runRes.ok) {
+      const errText = await runRes.text();
+      console.error('Failed to create run:', runRes.status, errText);
+      return NextResponse.json(
+        { error: `Erro ao executar o agente (${runRes.status}). Verifique o Agent ID.` },
+        { status: runRes.status }
+      );
+    }
+
+    const run = await runRes.json();
+    const runId = run.id;
+    let status = run.status;
+
+    // ── Step 4: Poll for completion (max ~60s) ──
+    const maxPolls = 60;
+    let polls = 0;
+    while (['queued', 'in_progress', 'requires_action'].includes(status) && polls < maxPolls) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const pollRes = await fetch(
+        `${baseUrl}/threads/${threadId}/runs/${runId}?api-version=${apiVersion}`,
+        { method: 'GET', headers }
+      );
+      if (!pollRes.ok) {
+        console.error('Poll failed:', pollRes.status);
+        break;
+      }
+      const pollData = await pollRes.json();
+      status = pollData.status;
+      polls++;
+    }
+
+    if (status !== 'completed') {
+      console.error('Run did not complete. Final status:', status);
+      return NextResponse.json(
+        { error: `O agente não conseguiu responder (status: ${status}). Tente novamente.` },
+        { status: 500 }
+      );
+    }
+
+    // ── Step 5: Retrieve the assistant's response ──
+    const listRes = await fetch(
+      `${baseUrl}/threads/${threadId}/messages?api-version=${apiVersion}&order=desc&limit=1`,
+      { method: 'GET', headers }
+    );
+
+    if (!listRes.ok) {
+      return NextResponse.json(
+        { error: 'Erro ao buscar a resposta do agente.' },
+        { status: 500 }
+      );
+    }
+
+    const listData = await listRes.json();
+    const assistantMsg = listData.data?.find((m) => m.role === 'assistant');
+    const responseText =
+      assistantMsg?.content?.[0]?.text?.value ||
+      assistantMsg?.content?.[0]?.text ||
+      'Sem resposta do agente.';
+
+    // Cleanup: delete the thread (fire-and-forget)
+    fetch(`${baseUrl}/threads/${threadId}?api-version=${apiVersion}`, {
+      method: 'DELETE',
+      headers,
+    }).catch(() => {});
+
+    return NextResponse.json({ message: responseText });
   } catch (error) {
     console.error('Chat API Error:', error);
     return NextResponse.json(
